@@ -1,0 +1,85 @@
+---
+- name: Install base packages
+  apt:
+    name: "{{ packages }}"
+    state: present
+    update_cache: yes
+  vars:
+    packages:
+    - apt-transport-https
+    - ca-certificates
+    - gnupg-agent
+    - software-properties-common
+
+- name: Get package architecture
+  register: dpkg_architecture
+  command: dpkg --print-architecture
+
+- name: Add an apt signing key for Docker
+  ansible.builtin.apt_key:
+    id: 8D81803C0EBFCD88
+    url: https://download.docker.com/linux/ubuntu/gpg
+    keyring: /etc/apt/keyrings/docker.gpg
+
+- name: Add apt repository for Docker stable version
+  block:
+    - name: docker apt source
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ dpkg_architecture.stdout }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+- name: Install Nginx
+  apt:
+    name: "{{ packages }}"
+    state: present
+    update_cache: yes
+  vars:
+    packages:
+    - nginx
+    - apache2-utils
+
+- name: Upload Registry tls files
+  ansible.builtin.copy:
+    src: .tls/
+    dest: /etc/nginx/conf.d/
+    mode: u=rwx,g=rx,o=rx
+
+- name: Generate htpasswd file
+  ansible.builtin.shell:
+    chdir: /etc/nginx/conf.d
+    cmd: |
+      htpasswd -cBb nginx.htpasswd "{{user.name}}" "{{user.passwd}}"
+
+- name: Upload Nginx configuration
+  notify: Restart Nginx
+  ansible.builtin.copy:
+    src: nginx/nginx.conf
+    dest: /etc/nginx/
+
+- name: Install docker and its dependecies
+  apt:
+    name: "{{ packages }}"
+    state: present
+    update_cache: yes
+  vars:
+    packages:
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+
+- name: Docker Registry Volume
+  ansible.builtin.file:
+    path: /var/lib/registry
+    state: directory
+
+- name: Run Docker Registry
+  community.docker.docker_container:
+    name: container-image-registry
+    state: started
+    restart: true
+    image: registry:2
+    volumes:
+      - /var/lib/registry:/var/lib/registry
+    ports:
+      - "127.0.0.1:5000:5000"
+
